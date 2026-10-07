@@ -797,8 +797,7 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
 
     <section class="panel guide-panel" id="eatRoutes">
       <div class="panel-head">
-        <div>
-          <h2>下面幫你整理：要吃什麼、拿什麼、怎麼走</h2>
+        <div>          <h2>下面幫你整理：要吃什麼、拿什麼、怎麼走</h2>
           <div class="hint">給不同口味的人一條好記的拿餐路線。</div>
         </div>
       </div>
@@ -998,3 +997,531 @@ function renderResults(){
   els.clearSearch.classList.toggle('show', !!q);
   els.results.innerHTML='';
   const activeFilter = regionFilter!=='ALL';
+  if(!q && !activeFilter){
+    els.empty.style.display='grid';
+    els.resultsLabel.style.display='none';
+    els.resultCount.textContent='請輸入姓名或桌號';
+    return;
+  }
+  els.empty.style.display='none';
+  els.resultsLabel.style.display='block';
+  els.resultCount.textContent=currentResults.length ? `找到 ${currentResults.length} 桌` : '沒有符合結果';
+  els.resultsLabel.textContent=q ? `「${q}」的符合結果` : '區域篩選結果';
+  currentResults.slice(0,60).forEach(t=>{
+    const btn=document.createElement('button');
+    btn.className='result'+(selectedBase===t.base?' active':'');
+    const hits=matchingNames(t,q).map(n=>highlight(displayName(n),q)).join('、');
+    btn.innerHTML=`
+      <div class="result-main">
+        <span class="result-table">${esc(prettyTable(t.table))}${t.addable?' <span class="add-badge">可加</span>':''}</span>
+        <span class="result-count">${t.region}區 · 表定 ${t.capacity} 人</span>
+      </div>
+      <div class="result-names">${hits}${t.names.length>matchingNames(t,q).length?' …':''}</div>`;
+    btn.addEventListener('click',()=>selectTable(t.base,true));
+    els.results.appendChild(btn);
+  });
+  if(!currentResults.length){
+    els.results.innerHTML='<div class="no-results">找不到符合資料，請試著只輸入姓氏或桌號前綴。</div>';
+  }
+}
+
+function renderSelected(){
+  const t=TABLES.find(x=>x.base===selectedBase);
+  if(!t){ els.selected.classList.remove('show'); els.selected.innerHTML=''; return; }
+  const q=els.search.value.trim();
+  const guests=t.names.map((n,i)=>{
+    const type=typeOfName(n);
+    const matched=q && norm(n).includes(norm(q));
+    const tag=type==='self'?'<span class="tag self">自費</span>':
+              type==='reserve'?'<span class="tag reserve">保留</span>':
+              type==='free'?'<span class="tag free">免費</span>':'';
+    return `<div class="guest${matched?' match':''}">
+      <span class="guest-index">${i+1}</span>
+      <span>${highlight(displayName(n),q)}</span>${tag}
+    </div>`;
+  }).join('');
+  els.selected.innerHTML=`
+    <div class="selected-top">
+      <div>
+        <div class="table-badge"><span class="region-dot"></span>${esc(prettyTable(t.table))}</div>
+        <div class="meta">${t.region} 區 · 表定 ${t.capacity} 人 · 名單 ${t.names.length} 筆</div>
+      </div>
+      ${t.addable?'<span class="add-badge">可加桌</span>':''}
+    </div>
+    <div class="guest-list">${guests}</div>
+    <div class="selected-actions">
+      <button class="mini-btn" id="copyTable">複製本桌名單</button>
+      <button class="mini-btn" id="focusMap">地圖定位</button>
+    </div>`;
+  els.selected.classList.add('show');
+  document.getElementById('copyTable').onclick=()=>copyTable(t);
+  document.getElementById('focusMap').onclick=()=>focusOnTable(t,true);
+}
+
+function renderDirectory(){
+  const rows=filteredTables();
+  els.directoryCount.textContent=`${rows.length} / 83 桌`;
+  els.directoryGrid.innerHTML='';
+  if(!rows.length){
+    els.directoryGrid.innerHTML='<div class="no-results">目前條件下沒有桌次。</div>';
+    return;
+  }
+  rows.forEach(t=>{
+    const b=document.createElement('button');
+    b.className='dir-card'+(selectedBase===t.base?' active':'');
+    const brief=t.names.slice(0,3).map(displayName).join('、')+(t.names.length>3?'…':'');
+    b.innerHTML=`
+      <div class="dir-top">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="dir-region">${t.region}</span>
+          <span class="dir-table">${esc(prettyTable(t.table))}</span>
+        </div>
+        <span class="dir-cap">${t.capacity} 人${t.addable?' · 可加':''}</span>
+      </div>
+      <div class="dir-names">${esc(brief)}</div>`;
+    b.onclick=()=>{ closeContentModal(); selectTable(t.base,true); };
+    els.directoryGrid.appendChild(b);
+  });
+}
+
+function hotspotSize(t){
+  if(t.capacity>=6) return [98,60];
+  if(t.capacity===5) return [80,64];
+  return [70,62];
+}
+function renderHotspots(){
+  els.hotspots.innerHTML='';
+  TABLES.forEach(t=>{
+    const b=document.createElement('button');
+    const [w,h]=hotspotSize(t);
+    b.className='hotspot'+(selectedBase===t.base?' active':'');
+    b.dataset.table=t.base;
+    b.title=`${prettyTable(t.table)}｜${t.names.map(displayName).join('、')}`;
+    b.setAttribute('aria-label',`${prettyTable(t.table)}，${t.names.map(displayName).join('、')}`);
+    b.style.left=t.x+'px'; b.style.top=t.y+'px'; b.style.width=w+'px'; b.style.height=h+'px';
+    b.onclick=()=>selectTable(t.base,false);
+    els.hotspots.appendChild(b);
+  });
+}
+
+function selectTable(base,focusMap){
+  selectedBase=base;
+  renderSelected(); renderResults(); renderDirectory(); renderHotspots();
+  const t=TABLES.find(x=>x.base===base);
+  history.replaceState(null,'','#table='+encodeURIComponent(base));
+  if(t && focusMap) focusOnTable(t,true);
+  if(window.innerWidth<1050){
+    document.getElementById('selectedCard').scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+}
+function setZoom(v,keepCenter=true){
+  const old=zoom;
+  zoom=Math.max(.42,Math.min(1.35,v));
+  const vp=els.viewport;
+  let cx=0,cy=0;
+  if(keepCenter){ cx=(vp.scrollLeft+vp.clientWidth/2)/old; cy=(vp.scrollTop+vp.clientHeight/2)/old; }
+  els.canvas.style.transform=`scale(${zoom})`;
+  els.sizer.style.width=(MAP_W*zoom)+'px';
+  els.sizer.style.height=(MAP_H*zoom)+'px';
+  els.zoomReadout.textContent=Math.round(zoom*100)+'%';
+  if(keepCenter){
+    requestAnimationFrame(()=>{
+      vp.scrollLeft=Math.max(0,cx*zoom-vp.clientWidth/2);
+      vp.scrollTop=Math.max(0,cy*zoom-vp.clientHeight/2);
+    });
+  }
+}
+function fitMap(){
+  autoFit=true;
+  const available=els.viewport.clientWidth-4;
+  const z=Math.max(.42,Math.min(1,available/MAP_W));
+  setZoom(z,false);
+  els.viewport.scrollTo({left:0,top:0,behavior:'smooth'});
+}
+function focusOnTable(t,allowZoom){
+  autoFit=false;
+  if(allowZoom && zoom<.64) setZoom(.72,false);
+  requestAnimationFrame(()=>{
+    const left=t.x*zoom-els.viewport.clientWidth/2;
+    const top=t.y*zoom-els.viewport.clientHeight/2;
+    els.viewport.scrollTo({left:Math.max(0,left),top:Math.max(0,top),behavior:'smooth'});
+  });
+}
+
+function copyText(text){
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(text).then(()=>toast('已複製')).catch(()=>fallbackCopy(text));
+  } else fallbackCopy(text);
+}
+function fallbackCopy(text){
+  const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try{document.execCommand('copy');toast('已複製')}catch(e){toast('請手動複製')}
+  ta.remove();
+}
+function copyTable(t){
+  const lines=[`${prettyTable(t.table)}（${t.region}區${t.addable?'・可加':''}）`,...t.names.map((n,i)=>`${i+1}. ${n}`)];
+  copyText(lines.join('\n'));
+}
+let toastTimer;
+function toast(msg){
+  clearTimeout(toastTimer); els.toast.textContent=msg; els.toast.classList.add('show');
+  toastTimer=setTimeout(()=>els.toast.classList.remove('show'),1600);
+}
+function refresh(){
+  renderResults(); renderDirectory(); renderSelected(); renderHotspots();
+}
+
+els.search.addEventListener('input',()=>{
+  refresh();
+  const q=els.search.value.trim();
+  if(q){
+    const exact=currentResults.find(t=>norm(t.base)===norm(q) || t.names.some(n=>norm(n)===norm(q)));
+    if(exact) selectTable(exact.base,false);
+  }
+});
+els.search.addEventListener('keydown',e=>{
+  if(e.key==='Enter' && currentResults.length){e.preventDefault();selectTable(currentResults[0].base,true);}
+  if(e.key==='Escape'){clearAll();}
+});
+els.clearSearch.onclick=()=>{els.search.value='';refresh();els.search.focus()};
+document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{
+  regionFilter=b.dataset.region;
+  document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active',x===b));
+  refresh();
+});
+document.getElementById('zoomIn').onclick=()=>{autoFit=false;setZoom(zoom+.1)};
+document.getElementById('zoomOut').onclick=()=>{autoFit=false;setZoom(zoom-.1)};
+document.getElementById('fitMap').onclick=fitMap;
+document.getElementById('printBtn').onclick=()=>window.print();
+document.getElementById('clearAllBtn').onclick=clearAll;
+function clearAll(){
+  els.search.value=''; regionFilter='ALL'; selectedBase=null;
+  document.querySelectorAll('.chip').forEach(b=>b.classList.toggle('active',b.dataset.region==='ALL'));
+  history.replaceState(null,'',location.pathname+location.search);
+  refresh(); fitMap(); els.search.focus();
+}
+document.addEventListener('keydown',e=>{
+  const tag=(e.target.tagName||'').toLowerCase();
+  if(e.key==='/' && tag!=='input' && tag!=='textarea'){e.preventDefault();els.search.focus();}
+});
+window.addEventListener('resize',()=>{ if(autoFit) fitMap(); });
+
+
+const contentModal = document.getElementById('contentModal');
+const contentModalBody = document.getElementById('contentModalBody');
+const contentModalTitle = document.getElementById('contentModalTitle');
+const contentModalSubtitle = document.getElementById('contentModalSubtitle');
+const contentModalClose = document.getElementById('contentModalClose');
+const directoryLauncher = document.getElementById('directory');
+const guideLauncher = document.getElementById('guideLauncher');
+const directoryContent = document.getElementById('directoryModalContent');
+const guideContent = document.getElementById('guideModalContent');
+let activeModalSource = null;
+let activeModalHome = null;
+let activeModalNext = null;
+let lastModalTrigger = null;
+
+function moveIntoModal(node){
+  activeModalSource = node;
+  activeModalHome = node.parentNode;
+  activeModalNext = node.nextSibling;
+  contentModalBody.appendChild(node);
+  node.style.display = node.classList.contains('guide-content-source') ? 'grid' : '';
+}
+
+function restoreModalSource(){
+  if(!activeModalSource || !activeModalHome) return;
+  activeModalSource.style.display = '';
+  if(activeModalNext && activeModalNext.parentNode === activeModalHome){
+    activeModalHome.insertBefore(activeModalSource, activeModalNext);
+  } else {
+    activeModalHome.appendChild(activeModalSource);
+  }
+  activeModalSource = activeModalHome = activeModalNext = null;
+}
+
+function openContentModal(kind, trigger){
+  if(contentModal.classList.contains('open')) closeContentModal(false);
+  lastModalTrigger = trigger || null;
+  contentModalBody.innerHTML = '';
+  if(kind === 'directory'){
+    contentModalTitle.textContent = '全部桌次';
+    contentModalSubtitle.textContent = '依目前搜尋與區域篩選同步更新；點桌次可直接回到座位圖定位。';
+    moveIntoModal(directoryContent);
+  } else {
+    contentModalTitle.textContent = 'URBAN PARADISE 巨城店｜餐區導覽與用餐攻略';
+    contentModalSubtitle.textContent = '餐區圖片、依座位拿餐、推薦路線、評論重點都集中在這個小視窗。';
+    moveIntoModal(guideContent);
+  }
+  contentModal.classList.add('open');
+  contentModal.setAttribute('aria-hidden','false');
+  document.body.classList.add('modal-open');
+  contentModalBody.scrollTop = 0;
+  requestAnimationFrame(()=>contentModalClose.focus());
+}
+
+function closeContentModal(returnFocus=true){
+  if(!contentModal || !contentModal.classList.contains('open')) return;
+  contentModal.classList.remove('open');
+  contentModal.setAttribute('aria-hidden','true');
+  document.body.classList.remove('modal-open');
+  restoreModalSource();
+  if(returnFocus && lastModalTrigger) requestAnimationFrame(()=>lastModalTrigger.focus());
+}
+
+function bindModalLauncher(el, kind){
+  if(!el) return;
+  el.addEventListener('click', e=>{
+    if(e.target.closest('button,a,input,select,textarea') && e.target !== el) return;
+    openContentModal(kind, el);
+  });
+  el.addEventListener('keydown', e=>{
+    if(e.key==='Enter' || e.key===' '){e.preventDefault();openContentModal(kind, el);}
+  });
+}
+bindModalLauncher(directoryLauncher,'directory');
+bindModalLauncher(guideLauncher,'guide');
+contentModalClose.addEventListener('click',()=>closeContentModal());
+contentModal.querySelector('[data-modal-close]').addEventListener('click',()=>closeContentModal());
+document.addEventListener('keydown',e=>{if(e.key==='Escape' && contentModal.classList.contains('open')) closeContentModal();});
+contentModalBody.addEventListener('click',e=>{
+  const a=e.target.closest('a[href^="#"]');
+  if(!a) return;
+  const id=a.getAttribute('href').slice(1);
+  const target=contentModalBody.querySelector('#'+CSS.escape(id));
+  if(target){e.preventDefault();target.scrollIntoView({behavior:'smooth',block:'start'});}
+});
+
+
+const FOOD_ZONE_DETAILS = {
+  'VIVA': {
+    label:'VIVA', category:'炭火・鐵板主菜', tagline:'最適合肉派與主菜派的第一主攻區。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'VIVA 是整場最有「主菜感」的一區，官方把它定位在炭火、鐵板、海鮮與現切肉品。這區的重點不是一次拿滿，而是趁熱少量多次；看到剛出爐、剛切好的品項最值得優先。',
+    chips:['現切肉品','鐵板熱菜','海鮮主菜','趁熱吃'],
+    picks:['現切肉品或炭烤肉類','鐵板現做熱菜','海鮮主菜','巨城限定可留意：海膽干貝魚子燉飯'],
+    timing:'建議排在前 1～3 站。若排隊長，可以先去 Breeeeeze 或 Ocean Bar 暖身，再回來拿剛出爐的主菜。',
+    strategy:'第一輪每種只拿一份，吃完覺得值得再二刷。主菜非常佔胃，不要同時配太多披薩、炸物。',
+    route:['Breeeeeze','VIVA','香鑲','Wonderland'],
+    seats:'Q 區與左側座位最順；B 區也適合從中央往上繞。'
+  },
+  '美樂地': {
+    label:'美樂地', category:'Pizza・美墨風味', tagline:'香濃、熱鬧、澱粉感較強的第二波主食區。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'美樂地以 Pizza、美墨與濃郁熱食為主，香氣重、飽足感也高。很適合當第二輪或中段補主食，但不建議一進場就拿一大盤，否則後面的海鮮、肉品與甜點會很難發揮。',
+    chips:['Pizza','美墨風味','濃郁熱食','第二輪'],
+    picks:['現烤 Pizza','美墨香料類熱食','焗烤或濃郁主食','巨城限定可留意：烏金炙烤高麗菜佐海藻奶油'],
+    timing:'最適合放在 VIVA 或 Ocean Bar 之後，已經吃過高價值主菜再補澱粉。',
+    strategy:'Pizza 建議一片一片拿；看到新鮮出爐再拿，口感通常比放一陣子的好。',
+    route:['VIVA','美樂地','脆焠','Wonderland'],
+    seats:'Q 區與左上方桌位距離較近，從左側拿餐特別順。'
+  },
+  'Wonderland': {
+    label:'Wonderland', category:'甜點・水果', tagline:'把胃留到最後，這裡負責漂亮收尾。',
+    image:'https://farm66.static.flickr.com/65535/54678511013_fe864e4d98_b.jpg',
+    imageAlt:'URBAN PARADISE 甜點區參考', source:'網路圖：海綿飽飽的鳳梨城堡（URBAN PARADISE 甜點區參考）；餐區定位依官方介紹整理。',
+    desc:'Wonderland 是甜點、果物與餐後收尾區。最好的吃法通常不是一開始拿，而是先逛一眼、記住最想吃的品項，等鹹食結束後再回來。這樣甜點不會在前半場搶走胃容量。',
+    chips:['蛋糕甜點','果物','最後一輪','拍照區'],
+    picks:['當日主打甜點','水果與清爽甜點','小份精緻甜點多樣試吃','巨城限定可留意：東方美人柿甜甜圈、焦糖花生費南雪、洛神米香巧克力杯子蛋糕'],
+    timing:'建議倒數 1～2 輪再來。若是熱門限定甜點怕錯過，可以先確認供應位置再回桌吃主菜。',
+    strategy:'一次先拿 2～3 款小份量，甜度高的品項和水果交錯吃，最後比較不膩。',
+    route:['主菜區','Wonderland','Oasis'],
+    seats:'A 區最靠近 Wonderland；若是 A 區座位，甜點補拿非常方便。'
+  },
+  '快意町': {
+    label:'快意町', category:'台式・中式熱食', tagline:'熟悉、穩定、長輩也容易喜歡的熟食安全牌。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'快意町聚焦台式佳餚與中式名點，是整間店最容易理解、也最不挑人的一區。若同行有長輩、孩子，或有人不想從生冷料理開始，這裡非常適合當起手站。',
+    chips:['台菜','中式點心','熟食','長輩友善'],
+    picks:['台式熱菜','中式點心','下飯家常菜','巨城限定可留意：川麻花椒啤酒燉雞、烏金海味炒米粉'],
+    timing:'可以第一站就來，也可以當主菜之間的轉換。若你很重視海鮮與現切肉，則建議先吃高價值主菜再回來。',
+    strategy:'熟食通常飽足感高，主食類先小份即可；把胃容量留給只在 buffet 才會特別想吃的品項。',
+    route:['快意町','VIVA','香鑲','Wonderland'],
+    seats:'Q 區最順，從左側座位出發距離很近。'
+  },
+  'Oasis': {
+    label:'Oasis', category:'酒飲・特調', tagline:'吃到中後段，再來一杯把聚餐節奏拉慢。',
+    image:'https://megapx-assets.dcard.tw/images/9641905c-9107-47a6-9360-1878cd1d5a26/640.jpeg',
+    imageAlt:'URBAN PARADISE 酒飲區參考', source:'網路圖：Dcard 品牌酒飲區參考；酒飲主題依 URBAN PARADISE 官方介紹整理。',
+    desc:'Oasis 是酒飲與飲料區，適合搭餐、中後段轉換味覺，或最後聊天收尾。這類飲品最容易不知不覺把胃撐滿，所以建議先把主餐吃到一定程度，再開始慢慢喝。',
+    chips:['特調','酒飲','無酒精','聊天收尾'],
+    picks:['當日特調','搭肉或海鮮的酒飲','無酒精飲品','巨城限定可留意：疾風九降、醉醺梅香、關西田野、客庄午後'],
+    timing:'中段到最後最適合。若你會喝酒，建議先吃一些東西再喝。',
+    strategy:'不要一次拿大杯甜飲；以小杯、分次補充最不影響胃容量。',
+    route:['Ocean Bar','VIVA','Oasis','Wonderland'],
+    seats:'R 區與中央下方桌位最方便；B 區也很近。'
+  },
+  'Breeeeeze': {
+    label:'Breeeeeze', category:'起司・冷盤・Tapas', tagline:'第一輪最漂亮的暖身站，少量就好。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店餐台實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'Breeeeeze 是起司、冷盤與 Tapas 的輕食區，很適合用來開場。它的優點是口味多、份量通常不大，可以讓你先試幾口、觀察全場，再決定主攻海鮮還是肉品。',
+    chips:['冷盤','起司','Tapas','開胃'],
+    picks:['起司與冷肉','清爽冷盤','Tapas 小點','巨城限定可留意：水梨柚香生牛肉塔塔'],
+    timing:'建議第一站或第二站。吃 2～3 小份就轉去 Ocean Bar 或 VIVA。',
+    strategy:'這區的價值在「多樣試味」而不是吃飽；拿太多會犧牲後面的主菜。',
+    route:['Breeeeeze','Ocean Bar','VIVA','Wonderland'],
+    seats:'B 區最接近，R 區往上走也很順。'
+  },
+  'Ocean Bar': {
+    label:'Ocean Bar', category:'海鮮・壽司', tagline:'海鮮派最值得優先鎖定的前兩站之一。',
+    image:'https://uc.udn.com.tw/photo/2025/07/24/realtime/32695206.jpg',
+    imageAlt:'URBAN PARADISE Ocean Bar 壽司參考', source:'網路圖：udnSTYLE（品牌 Ocean Bar 實景）；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'Ocean Bar 是海鮮與壽司主線。海鮮類最怕一次拿太多、在桌上放久，所以建議每一輪拿少量，吃完再回補。對海鮮派來說，這區應該排在非常前面。',
+    chips:['海鮮','壽司','日料','少量多次'],
+    picks:['海鮮冷盤','握壽司與捲壽司','日式料理','巨城限定可留意：蟹肉鮭魚火山捲'],
+    timing:'建議前 1～2 站。尤其想吃海鮮的人，先拿再說，不要先被炸物與 Pizza 填飽。',
+    strategy:'每輪拿 2～4 件就好，保持新鮮與最佳溫度；想吃很多種類就靠「多輪」而不是「大盤」。',
+    route:['Ocean Bar','Breeeeeze','VIVA','Oasis'],
+    seats:'B 區最方便；R 區往上也很順。'
+  },
+  '脆焠': {
+    label:'脆焠', category:'世界炸物', tagline:'現炸就是靈魂，這區一定要趁熱。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店餐台實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'脆焠主打各種炸物，特色就是酥脆和熱度。它很好吃，但也是最容易瞬間飽的一區，所以最好的方式是看到剛起鍋的東西，挑最想吃的 1～2 樣趁熱解決。',
+    chips:['炸物','現炸','酥脆','中後段'],
+    picks:['當下剛起鍋的炸物','特色炸物小品','巨城限定可留意：韭香生蠔捲、椒香韓辛軟殼蝦串'],
+    timing:'建議中段，不要第一輪就炸物開局。',
+    strategy:'炸物放久口感下降很快，所以只拿自己能立刻吃完的量；不值得堆滿整盤。',
+    route:['VIVA','香鑲','脆焠','Wonderland'],
+    seats:'A 區最靠近，右側桌位補拿最方便。'
+  },
+  '香鑲': {
+    label:'香鑲', category:'炭烤・醬燒', tagline:'火烤香氣與醬燒系，肉派的第二波高潮。',
+    image:'https://image.taiwannews.com.tw/2026/08/19/abd7324504604c2ab3273c641e26fece.jpg',
+    imageAlt:'URBAN PARADISE 巨城店餐台實景', source:'網路圖：Taiwan News／業者提供；餐區定位依 URBAN PARADISE 官方介紹整理。',
+    desc:'香鑲走日式醬燒、西式燻烤與異國辛香的火烤路線。和 VIVA 相比，這區更強調香氣與調味，適合在吃過一輪海鮮或主菜之後，換口味再衝第二波。',
+    chips:['烤物','醬燒','煙燻','異國辛香'],
+    picks:['炙燒與串烤','醬燒肉類','煙燻或香料料理','巨城限定可留意：紅糟炙燒鰻'],
+    timing:'中段最適合，接在 VIVA 或 Ocean Bar 後面。',
+    strategy:'這區口味偏重，建議搭清爽飲品或穿插冷盤；不然連續重口味容易疲乏。',
+    route:['Ocean Bar','VIVA','香鑲','Oasis'],
+    seats:'A 區右側最順，B 區往右也不遠。'
+  }
+};
+
+function escZone(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function zoneList(items){return '<ul>'+items.map(x=>'<li>'+escZone(x)+'</li>').join('')+'</ul>';}
+function routeHtml(items){return '<div class="zone-detail-route">'+items.map((x,i)=> (i?'<span class="zone-detail-arrow">→</span>':'')+'<span class="zone-detail-step">'+escZone(x)+'</span>').join('')+'</div>';}
+
+function openFoodZoneModal(zoneName, trigger){
+  const d = FOOD_ZONE_DETAILS[zoneName];
+  if(!d) return;
+  if(contentModal.classList.contains('open')) closeContentModal(false);
+  lastModalTrigger = trigger || null;
+  contentModalTitle.textContent = d.label+'｜'+d.category;
+  contentModalSubtitle.textContent = '詳細介紹、推薦拿法、最佳時機、動線與座位距離';
+  contentModalBody.innerHTML = `
+    <div class="zone-detail">
+      <div class="zone-detail-hero">
+        <div class="zone-detail-photo">
+          <img loading="eager" referrerpolicy="no-referrer" src="${escZone(d.image)}" alt="${escZone(d.imageAlt)}">
+          <div class="zone-photo-caption">${escZone(d.source)}</div>
+        </div>
+        <div class="zone-detail-intro">
+          <div class="zone-detail-kicker">URBAN PARADISE · 餐區詳細介紹</div>
+          <div class="zone-detail-name">${escZone(d.label)}</div>
+          <p class="zone-detail-tagline">${escZone(d.tagline)}</p>
+          <p class="zone-detail-desc">${escZone(d.desc)}</p>
+          <div class="zone-detail-chips">${d.chips.map(x=>`<span class="zone-detail-chip">${escZone(x)}</span>`).join('')}</div>
+        </div>
+      </div>
+      <div class="zone-detail-grid">
+        <div class="zone-detail-card zone-detail-highlight"><h3>⭐ 建議拿什麼</h3>${zoneList(d.picks)}</div>
+        <div class="zone-detail-card"><h3>⏱️ 什麼時候來最好</h3><p>${escZone(d.timing)}</p></div>
+        <div class="zone-detail-card"><h3>🍽️ 怎麼拿比較聰明</h3><p>${escZone(d.strategy)}</p></div>
+        <div class="zone-detail-card"><h3>📍 哪些座位拿最順</h3><p>${escZone(d.seats)}</p></div>
+      </div>
+      <div class="zone-detail-card"><h3>🧭 建議串聯路線</h3><p>如果這一區是你的主攻點，可以照這條順序吃：</p>${routeHtml(d.route)}</div>
+      <div class="zone-detail-action">
+        <button type="button" data-open-full-guide>打開完整用餐攻略</button>
+        <button type="button" data-close-zone>回座位圖</button>
+      </div>
+      <div class="zone-detail-source">供應菜色可能依餐期與現場調整；巨城限定與餐區定位依既有公開資料整理，實際以店內當日供應為準。</div>
+    </div>`;
+  contentModal.classList.add('open');
+  contentModal.setAttribute('aria-hidden','false');
+  document.body.classList.add('modal-open');
+  contentModalBody.scrollTop = 0;
+  requestAnimationFrame(()=>contentModalClose.focus());
+}
+
+document.querySelectorAll('.food-zone-hotspot[data-food-zone]').forEach(btn=>{
+  btn.addEventListener('click', e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    openFoodZoneModal(btn.dataset.foodZone, btn);
+  });
+});
+contentModalBody.addEventListener('click',e=>{
+  const close=e.target.closest('[data-close-zone]');
+  if(close){closeContentModal();return;}
+  const guide=e.target.closest('[data-open-full-guide]');
+  if(guide){
+    closeContentModal(false);
+    requestAnimationFrame(()=>openContentModal('guide', guideLauncher));
+  }
+});
+
+refresh();
+requestAnimationFrame(()=>{
+  fitMap();
+  const m=location.hash.match(/table=([^&]+)/);
+  if(m){
+    const base=decodeURIComponent(m[1]).toUpperCase();
+    if(TABLES.some(t=>t.base===base)) selectTable(base,true);
+  }
+});
+</script>
+
+<script id="auth-gate-script">
+(()=>{
+  const PASSWORD_SHA256='a7fc04e4c6f7823a3ccbd1dd99a7300ded02962e8b259da67fe0af937903eed5';
+  const EXPIRES_AT=Date.parse('2026-10-31T23:59:59+08:00');
+  const gate=document.getElementById('authGate');
+  const input=document.getElementById('authPassword');
+  const btn=document.getElementById('authSubmit');
+  const err=document.getElementById('authError');
+  const msg=document.getElementById('authMessage');
+  const isExpired=()=>Date.now()>EXPIRES_AT;
+  async function sha256(s){
+    const data=new TextEncoder().encode(s);
+    const digest=await crypto.subtle.digest('SHA-256',data);
+    return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function expire(){
+    gate.classList.add('expired');
+    gate.querySelector('.auth-mark').textContent='⏳';
+    document.getElementById('authTitle').textContent='活動頁面已失效';
+    msg.textContent='此座位查詢頁已於 2026/10/31 23:59（台灣時間）結束開放。';
+    gate.querySelector('.auth-note').textContent='如需重新開放，請聯絡活動管理者。';
+  }
+  function unlock(){
+    document.body.classList.remove('auth-locked');
+    gate.remove();
+    try{sessionStorage.setItem('upSeatAuth','1')}catch(e){}
+  }
+  async function verify(){
+    if(isExpired()) return expire();
+    btn.disabled=true; err.textContent='';
+    try{
+      if(await sha256(input.value)===PASSWORD_SHA256) unlock();
+      else{err.textContent='密碼不正確，請再試一次。';input.select();}
+    }catch(e){err.textContent='瀏覽器無法驗證密碼，請改用最新版 Chrome / Edge / Safari。';}
+    btn.disabled=false;
+  }
+  if(isExpired()) expire();
+  else{
+    let ok=false;try{ok=sessionStorage.getItem('upSeatAuth')==='1'}catch(e){}
+    if(ok) unlock();
+    else{btn.addEventListener('click',verify);input.addEventListener('keydown',e=>{if(e.key==='Enter')verify();});setTimeout(()=>input.focus(),0);}
+  }
+})();
+</script>
+</body>
+</html>

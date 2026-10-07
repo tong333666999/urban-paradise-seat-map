@@ -228,6 +228,7 @@ mark{background:#ffddbf;color:#773512;border-radius:4px;padding:0 2px}
   padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:#767a80;
   display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff
 }
+.map-note-mobile{display:none}
 
 .directory{margin-top:18px}
 .directory-inner{padding:14px}
@@ -548,7 +549,7 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
 <style id="mobile-ux-v2">
 /* Mobile-first overrides: keep desktop behavior unchanged, optimize phones/tablets. */
 @media (max-width: 760px){
-  html,body{max-width:100%;overflow-x:hidden}
+  html,body{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
   body{-webkit-text-size-adjust:100%}
   .shell{padding:10px 8px calc(28px + env(safe-area-inset-bottom))}
   .hero{margin-bottom:10px;gap:8px}
@@ -592,11 +593,12 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
   .zoom-readout{width:34px;font-size:10px}
   .map-viewport{
     height:min(58svh,560px);min-height:360px;max-height:600px;
-    touch-action:pan-x pan-y;overscroll-behavior:contain;
+    overflow:auto;touch-action:pan-x pan-y;overscroll-behavior:contain;
     -webkit-overflow-scrolling:touch;scrollbar-width:thin
   }
   .map-note{padding:8px 10px;font-size:11px;line-height:1.5}
-  .map-note span:last-child{display:none}
+  .map-note .map-note-desktop{display:none}
+  .map-note .map-note-mobile{display:inline;color:#6b635b}
   .food-popover{display:none!important}
   .food-zone-hotspot::after{
     content:"查看";opacity:.94!important;transform:none!important;
@@ -794,7 +796,8 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
       </div>
       <div class="map-note">
         <span>藍框＝目前選取桌位。桌號後標示「可加」者依 Excel 原始名單註記。</span>
-        <span>若手機上字太小，可用右上角 ＋ 放大。</span>
+        <span class="map-note-desktop">若手機上字太小，可用右上角 ＋ 放大。</span>
+        <span class="map-note-mobile">可雙指縮放／點「適合視窗」看全圖</span>
       </div>
     </section>
   </main>
@@ -1255,13 +1258,38 @@ function setZoom(v,keepCenter=true){
     });
   }
 }
+function applyZoomRaw(z){
+  zoom=z;
+  els.canvas.style.transform=`scale(${zoom})`;
+  els.sizer.style.width=(MAP_W*zoom)+'px';
+  els.sizer.style.height=(MAP_H*zoom)+'px';
+  els.zoomReadout.textContent=Math.round(zoom*100)+'%';
+}
 function fitMap(){
   autoFit=true;
   const isMobile=window.innerWidth<=760;
-  const available=els.viewport.clientWidth-(isMobile?8:4);
-  const z=Math.max(mobileZoomMin(),Math.min(1,available/MAP_W));
-  setZoom(z,false);
-  els.viewport.scrollTo({left:0,top:0,behavior:'smooth'});
+  const vw=els.viewport.clientWidth;
+  if(!vw) return false;
+  const pad=isMobile?8:4;
+  let z=Math.min(1,(vw-pad)/MAP_W);
+  if(isMobile){
+    // Prefer full map width visible; allow below mobileZoomMin when needed
+    z=Math.max(0.12,z);
+    applyZoomRaw(z);
+    if(MAP_W*zoom>vw+2){
+      applyZoomRaw(Math.max(0.12,(vw-pad)/MAP_W));
+    }
+  } else {
+    z=Math.max(mobileZoomMin(),z);
+    setZoom(z,false);
+  }
+  els.viewport.scrollTo({left:0,top:0,behavior:'auto'});
+  return true;
+}
+function scheduleFitMap(){
+  const run=()=>{ if(autoFit) fitMap(); };
+  requestAnimationFrame(()=>{ run(); requestAnimationFrame(run); });
+  [50,200,600].forEach(ms=>setTimeout(run,ms));
 }
 function focusOnTable(t,allowZoom){
   autoFit=false;
@@ -1334,6 +1362,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/' && tag!=='input' && tag!=='textarea'){e.preventDefault();els.search.focus();}
 });
 window.addEventListener('resize',()=>{ if(autoFit) fitMap(); });
+window.addEventListener('pageshow',()=>{ if(autoFit) scheduleFitMap(); });
+window.addEventListener('orientationchange',()=>{ if(autoFit) setTimeout(()=>fitMap(),120); });
 
 
 const contentModal = document.getElementById('contentModal');
@@ -1597,6 +1627,7 @@ contentModalBody.addEventListener('click',e=>{
 });
 
 refresh();
+scheduleFitMap();
 requestAnimationFrame(()=>{
   fitMap();
   const m=location.hash.match(/table=([^&]+)/);

@@ -1292,11 +1292,23 @@ function scheduleFitMap(){
   [50,200,600].forEach(ms=>setTimeout(run,ms));
 }
 function focusOnTable(t,allowZoom){
-  autoFit=false;
   const isMobile=window.innerWidth<=760;
-  const focusThreshold=isMobile?.50:.64;
-  const focusZoom=isMobile?.52:.72;
-  if(allowZoom && zoom<focusThreshold) setZoom(focusZoom,false);
+  if(isMobile){
+    // Mobile: keep width-fit zoom — never zoom-in on focus; only pan to table
+    const vw=els.viewport.clientWidth;
+    if(vw){
+      const fitZ=Math.max(0.12,(vw-8)/MAP_W);
+      if(zoom>fitZ+0.01){
+        applyZoomRaw(fitZ);
+        autoFit=true;
+      }
+    }
+  } else {
+    autoFit=false;
+    const focusThreshold=.64;
+    const focusZoom=.72;
+    if(allowZoom && zoom<focusThreshold) setZoom(focusZoom,false);
+  }
   requestAnimationFrame(()=>{
     const left=t.x*zoom-els.viewport.clientWidth/2;
     const top=t.y*zoom-els.viewport.clientHeight/2;

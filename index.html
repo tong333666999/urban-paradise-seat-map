@@ -178,7 +178,7 @@ kbd{
 .result-names{margin-top:4px;font-size:12px;color:#6d7177;line-height:1.45}
 mark{background:#ffddbf;color:#773512;border-radius:4px;padding:0 2px}
 
-.map-panel{min-width:0}
+.map-panel{min-width:0;max-width:100%;width:100%}
 .map-toolbar{display:flex;align-items:center;gap:8px}
 .map-toolbar .zoom{
   width:34px;height:34px;border:1px solid #e2ddd7;border-radius:10px;background:#fff;
@@ -187,16 +187,29 @@ mark{background:#ffddbf;color:#773512;border-radius:4px;padding:0 2px}
 .map-toolbar .fit{width:auto;padding:0 10px;font-size:12px}
 .zoom-readout{font-size:11px;color:#85888c;width:40px;text-align:center;font-weight:800}
 .map-viewport{
-  width:100%;height:min(69vh,740px);min-height:520px;overflow:auto;
+  width:100%;max-width:100%;height:min(69vh,740px);min-height:520px;
+  overflow:auto;overscroll-behavior:contain;
   background:
     linear-gradient(45deg,#f8f6f3 25%,transparent 25%) 0 0/18px 18px,
     linear-gradient(45deg,transparent 75%,#f8f6f3 75%) 0 0/18px 18px,
     #fff;
   position:relative;
   scrollbar-color:#c9c2bb #f5f2ee;
+  /* Zoom grows only the inner sizer; never expand .map-panel / page */
+  contain:layout paint;
+  isolation:isolate;
+  box-sizing:border-box;
 }
-.map-sizer{position:relative}
-.map-canvas{position:absolute;left:0;top:0;transform-origin:0 0}
+.map-sizer{
+  position:relative;overflow:hidden;line-height:0;
+  /* Explicit w/h set by JS to MAP_* * zoom; clips abspos canvas so it
+     cannot inflate the scrollport beyond the scaled size. */
+  flex-shrink:0;max-width:none;
+}
+.map-canvas{
+  position:absolute;left:0;top:0;width:1367px;height:942px;
+  transform-origin:0 0;will-change:transform;
+}
 .map-img{display:block;width:1367px;height:942px;user-select:none;-webkit-user-drag:none}
 .hotspot{
   position:absolute;transform:translate(-50%,-50%);
@@ -549,7 +562,7 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
 <style id="mobile-ux-v2">
 /* Mobile-first overrides: keep desktop behavior unchanged, optimize phones/tablets. */
 @media (max-width: 760px){
-  html,body{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  html,body{max-width:100%;overflow-x:hidden;-webkit-overflow-scrolling:touch}
   body{-webkit-text-size-adjust:100%}
   .shell{padding:10px 8px calc(28px + env(safe-area-inset-bottom))}
   .hero{margin-bottom:10px;gap:8px}
@@ -591,11 +604,15 @@ body.auth-locked > *:not(#authGate):not(script):not(style){display:none!importan
   }
   .map-toolbar .zoom{width:36px;height:36px}
   .zoom-readout{width:34px;font-size:10px}
+  .map-panel{overflow:hidden;max-width:100%}
   .map-viewport{
+    width:100%;max-width:100%;
     height:min(58svh,560px);min-height:360px;max-height:600px;
-    overflow:auto;touch-action:pan-x pan-y;overscroll-behavior:contain;
-    -webkit-overflow-scrolling:touch;scrollbar-width:thin
+    overflow:auto!important;touch-action:pan-x pan-y;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;scrollbar-width:thin;
+    contain:strict;isolation:isolate;
   }
+  .map-sizer{overflow:hidden}
   .map-note{padding:8px 10px;font-size:11px;line-height:1.5}
   .map-note .map-note-desktop{display:none}
   .map-note .map-note-mobile{display:inline;color:#6b635b}
@@ -1241,16 +1258,21 @@ function selectTable(base,focusMap){
   }
 }
 function mobileZoomMin(){ return window.innerWidth<=760 ? .24 : .42; }
-function setZoom(v,keepCenter=true){
-  const old=zoom;
-  zoom=Math.max(mobileZoomMin(),Math.min(1.35,v));
-  const vp=els.viewport;
-  let cx=0,cy=0;
-  if(keepCenter){ cx=(vp.scrollLeft+vp.clientWidth/2)/old; cy=(vp.scrollTop+vp.clientHeight/2)/old; }
+function mobileZoomMax(){ return window.innerWidth<=760 ? 2 : 1.6; }
+function applyZoomStyles(){
   els.canvas.style.transform=`scale(${zoom})`;
+  // Only the sizer (scrollable content inside #mapViewport) changes size.
   els.sizer.style.width=(MAP_W*zoom)+'px';
   els.sizer.style.height=(MAP_H*zoom)+'px';
   els.zoomReadout.textContent=Math.round(zoom*100)+'%';
+}
+function setZoom(v,keepCenter=true){
+  const old=zoom;
+  zoom=Math.max(mobileZoomMin(),Math.min(mobileZoomMax(),v));
+  const vp=els.viewport;
+  let cx=0,cy=0;
+  if(keepCenter && old>0){ cx=(vp.scrollLeft+vp.clientWidth/2)/old; cy=(vp.scrollTop+vp.clientHeight/2)/old; }
+  applyZoomStyles();
   if(keepCenter){
     requestAnimationFrame(()=>{
       vp.scrollLeft=Math.max(0,cx*zoom-vp.clientWidth/2);
@@ -1260,10 +1282,7 @@ function setZoom(v,keepCenter=true){
 }
 function applyZoomRaw(z){
   zoom=z;
-  els.canvas.style.transform=`scale(${zoom})`;
-  els.sizer.style.width=(MAP_W*zoom)+'px';
-  els.sizer.style.height=(MAP_H*zoom)+'px';
-  els.zoomReadout.textContent=Math.round(zoom*100)+'%';
+  applyZoomStyles();
 }
 function fitMap(){
   autoFit=true;
@@ -1294,15 +1313,7 @@ function scheduleFitMap(){
 function focusOnTable(t,allowZoom){
   const isMobile=window.innerWidth<=760;
   if(isMobile){
-    // Mobile: keep width-fit zoom — never zoom-in on focus; only pan to table
-    const vw=els.viewport.clientWidth;
-    if(vw){
-      const fitZ=Math.max(0.12,(vw-8)/MAP_W);
-      if(zoom>fitZ+0.01){
-        applyZoomRaw(fitZ);
-        autoFit=true;
-      }
-    }
+    // Mobile: never change zoom on focus — keep user zoom or autoFit width-fit; only pan
   } else {
     autoFit=false;
     const focusThreshold=.64;
@@ -1361,6 +1372,43 @@ document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{
 document.getElementById('zoomIn').onclick=()=>{autoFit=false;setZoom(zoom+.1)};
 document.getElementById('zoomOut').onclick=()=>{autoFit=false;setZoom(zoom-.1)};
 document.getElementById('fitMap').onclick=fitMap;
+
+/* Pinch zoom: scale only the map canvas inside #mapViewport (not the page/card). */
+(function bindMapPinch(){
+  const vp=els.viewport;
+  if(!vp) return;
+  let pinch=null;
+  const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  const mid=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+  vp.addEventListener('touchstart',e=>{
+    if(e.touches.length===2){
+      const d=dist(e.touches[0],e.touches[1]);
+      const m=mid(e.touches[0],e.touches[1]);
+      const rect=vp.getBoundingClientRect();
+      pinch={
+        startDist:d||1,
+        startZoom:zoom,
+        contentX:(vp.scrollLeft+(m.x-rect.left))/zoom,
+        contentY:(vp.scrollTop+(m.y-rect.top))/zoom
+      };
+    }
+  },{passive:true});
+  vp.addEventListener('touchmove',e=>{
+    if(!pinch || e.touches.length!==2) return;
+    e.preventDefault();
+    autoFit=false;
+    const d=dist(e.touches[0],e.touches[1]);
+    const next=pinch.startZoom*(d/pinch.startDist);
+    setZoom(next,false);
+    const m=mid(e.touches[0],e.touches[1]);
+    const rect=vp.getBoundingClientRect();
+    vp.scrollLeft=Math.max(0,pinch.contentX*zoom-(m.x-rect.left));
+    vp.scrollTop=Math.max(0,pinch.contentY*zoom-(m.y-rect.top));
+  },{passive:false});
+  const endPinch=()=>{pinch=null};
+  vp.addEventListener('touchend',endPinch,{passive:true});
+  vp.addEventListener('touchcancel',endPinch,{passive:true});
+})();
 document.getElementById('printBtn').onclick=()=>window.print();
 document.getElementById('clearAllBtn').onclick=clearAll;
 function clearAll(){

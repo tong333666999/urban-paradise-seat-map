@@ -1426,6 +1426,40 @@ document.addEventListener('keydown',e=>{
 window.addEventListener('resize',()=>{ if(autoFit) fitMap(); });
 window.addEventListener('pageshow',()=>{ if(autoFit) scheduleFitMap(); });
 window.addEventListener('orientationchange',()=>{ if(autoFit) setTimeout(()=>fitMap(),120); });
+/* Robust initial fit. At load the app is hidden behind the password gate
+   (display:none => #mapViewport is 0x0), so the startup fitMap() calls bail out
+   and #mapSizer never gets its explicit size -> it collapses to 0px tall and the
+   map is invisible on desktop until a zoom button is clicked. Re-run the fit once
+   the viewport really has a width: after unlock, on viewport resize, and after the
+   map image loads. Only while autoFit is on (i.e. until the user zooms manually). */
+(function ensureInitialMapFit(){
+  const vp=els.viewport;
+  if(!vp) return;
+  // Never leave the sizer collapsed: fall back to 100% size until a real fit runs.
+  if(!els.sizer.style.width) applyZoomStyles();
+  const refit=()=>{ if(autoFit && vp.clientWidth>0) fitMap(); };
+  const refitSoon=()=>requestAnimationFrame(()=>{ refit(); requestAnimationFrame(refit); });
+  let lastW=vp.clientWidth;
+  if('ResizeObserver' in window){
+    // React to width changes only (fit is width-based), incl. 0 -> visible on unlock.
+    new ResizeObserver(()=>{
+      const w=vp.clientWidth;
+      if(w>0 && w!==lastW){ lastW=w; refit(); }
+      else if(w===0) lastW=0;
+    }).observe(vp);
+  }
+  const img=els.canvas && els.canvas.querySelector('.map-img');
+  if(img){
+    if(img.complete) refitSoon();
+    else img.addEventListener('load',refitSoon,{once:true});
+  }
+  if(document.body.classList.contains('auth-locked')){
+    const mo=new MutationObserver(()=>{
+      if(!document.body.classList.contains('auth-locked')){ mo.disconnect(); refitSoon(); }
+    });
+    mo.observe(document.body,{attributes:true,attributeFilter:['class']});
+  }
+})();
 
 
 const contentModal = document.getElementById('contentModal');
